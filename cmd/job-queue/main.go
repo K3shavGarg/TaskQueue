@@ -8,11 +8,10 @@ import (
 	"Job-Queue/metrics"
 	"Job-Queue/pkg"
 	"fmt"
-	"log"
-	"net/http"
-
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"log"
+	"net/http"
 )
 
 // The thing is, when you have a black box, you can only ever use it as a black box. But if you have a box that you understand well, you can take it into pieces, repurpose the pieces for completely different things, all without getting lost.
@@ -27,7 +26,7 @@ func main() {
 	router.Handle("/metrics", promhttp.Handler())
 
 	// Starting Workers
-	worker.StartWorkerPool(routes.JobService.Queue, 10)
+	worker.StartQueueProcessor(queue, 5, 30)
 
 	pkg.Log.Info(fmt.Sprintf("Listening on PORT: %v", config.Env.Port))
 
