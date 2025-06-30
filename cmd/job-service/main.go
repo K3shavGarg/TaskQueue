@@ -20,7 +20,10 @@ func main() {
 	queue := model.NewRedisQueue(config.Client)
 
 	router := mux.NewRouter()
-
+	sm := config.Client.Ping(config.Ctx)
+	if sm == nil {
+		print("something wrong")
+	}
 	routes.RegisterJobRoutes(router, queue)
 	metrics.Init()
 	router.Handle("/metrics", promhttp.Handler())

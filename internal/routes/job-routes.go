@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"Job-Queue/internal/model"
 	"Job-Queue/internal/handlers"
 	"Job-Queue/internal/service"
 
@@ -9,8 +10,8 @@ import (
 
 var JobService *service.JobService
 
-func RegisterJobRoutes(router *mux.Router) {
-	JobService = service.NewJobService()
+func RegisterJobRoutes(router *mux.Router, queue *model.RedisQueue) {
+	JobService = service.NewJobService(queue)
 	jobHandler := handlers.NewJobHandler(JobService)
 	router.HandleFunc("/submit-job", jobHandler.SubmitJob).Methods("POST")
 	router.HandleFunc("/jobs", jobHandler.GetAllJobs).Methods("GET")

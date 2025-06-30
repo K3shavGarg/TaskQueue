@@ -20,7 +20,7 @@ func init() {
 
 	// Write to rotating file
 	logFile := &lumberjack.Logger{
-		Filename:   "../../logs/app.log",
+		Filename:   "logs/app.log",
 		MaxSize:    20, // MB
 		MaxBackups: 0,  // Keep all backups
 		MaxAge:     14, // days

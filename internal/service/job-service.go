@@ -6,21 +6,42 @@ import (
 )
 
 type JobService struct {
-	Queue *model.Queue
+	Queue *model.RedisQueue
 }
 
-func NewJobService() *JobService {
-	NewQueue := model.NewQueue(10)
+func NewJobService(queue *model.RedisQueue) *JobService {
 	return &JobService{
-		Queue: NewQueue,
+		Queue: queue,
 	}
 }
 
-func (j *JobService) GetAllJobs() []model.Job {
-	return j.Queue.GetJobs()
+func (j *JobService) GetAllJobs(start, end int64, status, jobType string) ([]*model.Job, error) {
+	cmdMap, err := j.Queue.GetJobs(start, end)
+	if err != nil {
+		return nil, err
+	}
+	jobs := []*model.Job{}
+	for id, cmd := range cmdMap {
+		data := cmd.Val()
+		if len(data) == 0 {
+			continue
+		}
+
+		job := model.HydrateJob(data, id)
+
+		if status != "" && job.Status != status {
+			continue
+		}
+		if jobType != "" && job.Type != jobType {
+			continue
+		}
+
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
 }
 
-func (j *JobService) GetJobByID(ID int64) (*model.Job, error) {
+func (j *JobService) GetJobByID(ID string) (*model.Job, error) {
 	job, err := j.Queue.GetJobByID(ID)
 
 	if err != nil {
@@ -29,7 +50,7 @@ func (j *JobService) GetJobByID(ID int64) (*model.Job, error) {
 	return job, nil
 }
 
-func (j *JobService) PushJob(job model.Job) error {
+func (j *JobService) PushJob(job *model.Job) error {
 	if err := j.Queue.Enqueue(job); err != nil {
 		return fmt.Errorf("error in enqueueing: %v", err)
 	}
