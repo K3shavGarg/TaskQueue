@@ -8,5 +8,5 @@ import (
 var Ctx = context.Background()
 
 var Client = redis.NewClient(&redis.Options{
-	Addr: "host.docker.internal.:6379",
+	Addr: "localhost:6379",
 })

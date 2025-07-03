@@ -1,6 +1,7 @@
 package utils
 
 import (
+	
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -24,3 +25,5 @@ func WriteJSON(w http.ResponseWriter, status int, data any) error {
 func WriteError(w http.ResponseWriter, status int, err error) {
 	WriteJSON(w, status, map[string]string{"error": err.Error()})
 }
+
+

@@ -32,12 +32,16 @@ func (q *RedisQueue) Enqueue(job *Job) error {
 	}
 	jobKey := fmt.Sprintf("job:%v", job.ID)
 	_, err = q.client.TxPipelined(config.Ctx, func(pipe redis.Pipeliner) error {
+		if job.Delay_ms > 0 {
+			job.Status = "accepted"
+		}
 		jobData := map[string]any{
-			"status":     job.Status,
-			"attempts":   job.Attempts,
-			"created_at": job.CreatedAt.Unix(),
-			"type":       job.Type,
-			"payload":    string(payloadBytes),
+			"status":      job.Status,
+			"attempts":    job.Attempts,
+			"created_at":  job.CreatedAt.Unix(),
+			"type":        job.Type,
+			"payload":     string(payloadBytes),
+			"webhook_url": job.WebhookURL,
 		}
 
 		pipe.HSet(config.Ctx, jobKey, jobData)
@@ -45,7 +49,15 @@ func (q *RedisQueue) Enqueue(job *Job) error {
 			Score:  float64(job.CreatedAt.Unix()),
 			Member: job.ID,
 		})
-		pipe.RPush(config.Ctx, "worker_queue", job.ID)
+		if job.Delay_ms > 0 {
+			score := time.Now().Add(time.Duration(job.Delay_ms) * time.Millisecond).Unix()
+			pipe.ZAdd(config.Ctx, "delayed_queue", redis.Z{
+				Score:  float64(score),
+				Member: job.ID,
+			})
+		} else {
+			pipe.RPush(config.Ctx, "worker_queue", job.ID)
+		}
 		return nil
 	})
 	return err
@@ -53,6 +65,9 @@ func (q *RedisQueue) Enqueue(job *Job) error {
 
 func (q *RedisQueue) RedisFetcher(id int, jobChan chan *Job) {
 	for {
+		if len(jobChan) == 100 {
+			continue
+		}
 		jobID, err := q.client.BRPopLPush(config.Ctx, "worker_queue", "in_progress_queue", 5*time.Second).Result()
 		if err != nil {
 			if err != redis.Nil {
@@ -93,6 +108,30 @@ func (q *RedisQueue) RedisFetcher(id int, jobChan chan *Job) {
 	}
 }
 
+func (q *RedisQueue) StartDelayedPoller() {
+	ticker := time.NewTicker(2 * time.Second)
+	for range ticker.C {
+		now := time.Now().Unix()
+		jobIDs, err := q.client.ZRangeByScore(config.Ctx, "delayed_queue", &redis.ZRangeBy{
+			Min:   "-inf",
+			Max:   fmt.Sprint(now),
+			Count: 20, // batch move
+		}).Result()
+
+		if err != nil || len(jobIDs) == 0 {
+			continue
+		}
+
+		for _, jobID := range jobIDs {
+			pipe := q.client.TxPipeline()
+			pipe.ZRem(config.Ctx, "delayed_queue", jobID)
+			pipe.RPush(config.Ctx, "worker_queue", jobID)
+			pipe.HSet(config.Ctx, "job:"+jobID, "status", "queued")
+			_, _ = pipe.Exec(config.Ctx)
+		}
+	}
+}
+
 func (q *RedisQueue) GetJobByID(jobID string) (*Job, error) {
 	jobKey := fmt.Sprintf("job:%v", jobID)
 	data, err := q.client.HGetAll(config.Ctx, jobKey).Result()
@@ -118,11 +157,24 @@ func (q *RedisQueue) AckJob(jobID int64) error {
 }
 
 func (q *RedisQueue) FailJob(jobID int64) error {
-	_, err := q.client.LRem(config.Ctx, "in_progress_queue", 0, fmt.Sprintf("%v", jobID)).Result()
+	lua := `
+		local removed = redis.call("LREM", KEYS[1], 0, ARGV[1])
+		if removed > 0 then
+			redis.call("RPUSH", KEYS[2], ARGV[1])
+		end
+		return removed
+	`
+	_, err := q.client.Eval(
+		config.Ctx,
+		lua,
+		[]string{"in_progress_queue", "dead_letter_queue"},
+		fmt.Sprintf("%v", jobID),
+	).Result()
 	if err != nil {
-		return err
+		pkg.Log.WithError(err).WithFields(logrus.Fields{
+			"job_id": jobID,
+		}).Error("Failed to enqueue job in DLQ")
 	}
-	_, err = q.client.RPush(config.Ctx, "dead_letter_queue", jobID).Result()
 	return err
 }
 
@@ -145,24 +197,3 @@ func (q *RedisQueue) GetJobs(start int64, end int64) (map[string]*redis.MapStrin
 	}
 	return cmdMap, nil
 }
-
-// err = q.client.HSet(config.Ctx, jobKey, map[string]any{
-// 	"status":     job.Status,
-// 	"attempts":   job.Attempts,
-// 	"created_at": job.CreatedAt.Unix(),
-// 	"type":       job.Type,
-// 	"payload":    string(payloadBytes),
-// }).Err()
-
-// if err != nil {
-// 	return err
-// }
-// _, err = q.client.ZAdd(config.Ctx, "job_index", redis.Z{
-// 	Score:  float64(job.ID),
-// 	Member: job.ID,
-// }).Result()
-
-// if err != nil {
-// 	return err
-// }
-// _, err = q.client.RPush(config.Ctx, "worker_queue", job.ID).Result()

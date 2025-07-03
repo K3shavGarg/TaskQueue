@@ -66,6 +66,8 @@ func (jh *JobHandler) SubmitJob(w http.ResponseWriter, r *http.Request) {
 	job := model.Job{
 		Payload: payload.Payload,
 		Type:    payload.Type,
+		Delay_ms: payload.Delay_ms,
+		WebhookURL: payload.WebhookURL,
 	}
 	// Call the service
 	if err := jh.jobService.PushJob(&job); err != nil {

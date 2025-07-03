@@ -5,6 +5,7 @@ import (
 	"Job-Queue/internal/model"
 	"Job-Queue/metrics"
 	"Job-Queue/pkg"
+	"Job-Queue/utils"
 
 	"fmt"
 	"math/rand"
@@ -16,6 +17,8 @@ import (
 var JobChan = make(chan *model.Job, 100)
 
 func StartQueueProcessor(queue *model.RedisQueue, fetchers int, workers int) {
+	go queue.StartDelayedPoller()
+
 	for i := 0; i < fetchers; i++ {
 		go queue.RedisFetcher(i, JobChan)
 	}
@@ -65,7 +68,7 @@ func worker(id int, jobChan chan *model.Job, queue *model.RedisQueue) {
 					"status":      "failed",
 					"job_type":    job.Type,
 					"attempts":    job.Attempts,
-				}).WithError(err).Error("Job ultimately failed after max retries, moving to DLQ")
+				}).WithError(err).Error("Job ultimately failed after max retries")
 			} else {
 				metrics.JobsProcessed.Inc()
 				metrics.JobDuration.Observe(time.Since(startTime).Seconds())
@@ -78,12 +81,20 @@ func worker(id int, jobChan chan *model.Job, queue *model.RedisQueue) {
 					"attempts":    job.Attempts,
 				}).Info("Worker completed processing task successfully")
 			}
+			if job.WebhookURL != "" {
+				go utils.SendWebhookNotification(job, queue)
+			} else {
+				queue.FailJob(job.ID)
+				pkg.Log.WithFields(logrus.Fields{
+					"job_id": job.ID,
+				}).Warn("Sedning Job to DLQ")
+			}
 		}()
 	}
 }
 
 func processJob(job *model.Job, worker_id int, queue *model.RedisQueue) error {
-	delay := 1 * time.Second
+	delay := 100 * time.Millisecond
 	maxAttempts, valid := config.MaxAttempts[job.Type]
 	if !valid {
 		maxAttempts = 2
@@ -110,7 +121,6 @@ func processJob(job *model.Job, worker_id int, queue *model.RedisQueue) error {
 			job.Status = "failed"
 			job.CompletedAt = time.Now()
 			queue.SaveJob(job)
-			queue.FailJob(job.ID) // move to DLQ
 			return err
 		}
 		queue.SaveJob(job)
@@ -123,9 +133,10 @@ func processJob(job *model.Job, worker_id int, queue *model.RedisQueue) error {
 			"status":    "failure",
 		}).Warn("Retrying Job...")
 
-		jitter := time.Duration(rand.Int63n(int64(delay))) // Randomize the backoff
-		time.Sleep(delay + jitter)
-		delay *= 2 // Exponential backoff
+		maxDelay := delay
+		jitter := time.Duration(rand.Int63n(int64(maxDelay))) // Random delay between 0 and delay
+		time.Sleep(jitter)
+		delay *= 2
 	}
 	return nil
 }
@@ -138,3 +149,9 @@ func taskFunc(job *model.Job) error {
 	time.Sleep(1 * time.Second)
 	return nil
 }
+
+// Full Jitter
+
+//-> Retry storms (everyone retrying at exactly 100ms, 200ms, etc.)
+
+//-> Synchronized backoff patterns in large distributed systems

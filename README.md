@@ -25,6 +25,15 @@ Background jobs are used in production systems to handle tasks like sending emai
 - **Docker:** For containerization.
 - **Postman:** For API testing (example requests provided below).
 
+## Architecture Diagram
+![Architecture Diagram](image.png)
+
+| Queue Name          | Purpose                                |
+| ------------------- | -------------------------------------- |
+| `work_queue`        | Main job queue (waiting to be fetched) |
+| `in_progress_queue` | Jobs currently being processed         |
+| `dlq_queue` (opt)   | Failed jobs (DLQ)                      |
+
 ## How It Works?
 This project is built around a Redis-backed job queue system with worker concurrency, retries, and DLQ. Here's how the flow works:
 
@@ -58,13 +67,58 @@ This project is built around a Redis-backed job queue system with worker concurr
 ### 6. Completion
 -> If a job succeeds, it is marked as "completed", and removed from in_progress_queue.
 
+## APIs
+##  1.📬 Submit a Job
 
+This API allows clients to enqueue a new job into the system. Jobs are processed asynchronously by background workers.
 
+### 🔧 Method
 
-![Architecture Diagram](image.png)
+**POST** `/jobs`
 
-| Queue Name          | Purpose                                |
-| ------------------- | -------------------------------------- |
-| `work_queue`        | Main job queue (waiting to be fetched) |
-| `in_progress_queue` | Jobs currently being processed         |
-| `dlq_queue` (opt)   | Failed jobs (DLQ)                      |
+### 🧾 Request Body
+
+```json
+{
+  "type": "Encode Video",
+  "payload": {
+    "file_url": "https://example.com/video.mp4",
+    "format": "mp4"
+  }
+}
+```
+---
+
+## 2.🔍Get Job by ID
+
+Fetches the status and metadata of a specific job using its unique ID.
+
+### 🔧 Method
+
+**GET** `/jobs/:id`
+
+### 🔑 Path Parameter
+
+- **id** (`number`) — The unique identifier of the job to retrieve.
+
+---
+
+## 3.📄 List Jobs
+
+Retrieves a list of jobs based on optional filters like status, type, and pagination parameters.
+
+### 🔧 Method
+
+**GET** `/jobs`
+
+### 🔑 Query Parameters
+
+- **page** (`integer`, optional) — The page number for pagination (default: 1).
+- **limit** (`integer`, optional) — The number of jobs to return per page (default: 10).
+- **status** (`string`, optional) — Filter jobs by status (`queued`, `processing`, `failed`, `completed`).
+- **type** (`string`, optional) — Filter jobs by type (e.g., `Encode Video`, `Image Resize`).
+
+### 📝 Example Request
+``` 
+GET /jobs?page=1&limit=20&status=completed&type=Encode Video 
+```
